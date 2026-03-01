@@ -1,7 +1,12 @@
 import { Router } from "express";
 import { prisma } from "../db/prisma.js";
+import { z } from "zod";
 
 const router = Router();
+const updateBoardSchema = z.object({
+  name: z.string().min(1).optional(),
+  description: z.string().nullable().optional(),
+});
 
 /**
  * POST /api/boards
@@ -80,6 +85,74 @@ router.get("/:boardId", async (req, res, next) => {
     }
 
     res.json(board);
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * PUT /api/boards/:boardId
+ */
+router.put("/:boardId", async (req, res, next) => {
+  try {
+    const { boardId } = req.params;
+    const body = updateBoardSchema.parse(req.body ?? {});
+
+    const updated = await prisma.board.update({
+      where: { id: boardId },
+      data: body,
+    });
+
+    res.json(updated);
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * DELETE /api/boards/:boardId
+ */
+router.delete("/:boardId", async (req, res, next) => {
+  try {
+    const { boardId } = req.params;
+
+    await prisma.board.delete({
+      where: { id: boardId },
+    });
+
+    res.status(204).send();
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * POST /api/boards/:boardId/tasks
+ */
+router.post("/:boardId/tasks", async (req, res, next) => {
+  try {
+    const { boardId } = req.params;
+
+    const last = await prisma.task.findFirst({
+      where: { boardId, status: "TODO" },
+      orderBy: { order: "desc" },
+      select: { order: true },
+    });
+
+    const nextOrder = (last?.order ?? -1) + 1;
+
+    const created = await prisma.task.create({
+      data: {
+        boardId,
+        name: "New Task",
+        description: null,
+        icon: "📝",
+        status: "TODO",
+        order: nextOrder,
+      },
+    });
+
+    res.status(201).json(created);
   } catch (error) {
     next(error);
   }
