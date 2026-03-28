@@ -8,53 +8,73 @@ const updateBoardSchema = z.object({
   description: z.string().nullable().optional(),
 });
 
+const createTaskSchema = z.object({
+  name: z.string().min(1).default("Nova tarefa"),
+  description: z.string().nullable().optional(),
+  priority: z.enum(["LOW", "MEDIUM", "HIGH"]).default("MEDIUM"),
+});
+
+// Cria board com 4 tarefas de exemplo e retorna apenas o id (usado pelo frontend).
+async function createDefaultBoard() {
+  const board = await prisma.board.create({
+    data: {
+      name: "My Task Board",
+      description: "Tasks to keep organised",
+      tasks: {
+        create: [
+          {
+            name: "Task To Do",
+            description: "Work on a challenge and learn TypeScript.",
+            icon: "📚",
+            status: "TODO",
+            order: 0,
+            priority: "HIGH",
+            completed: false,
+          },
+          {
+            name: "Task in Progress",
+            description: "Currently working on this task.",
+            icon: "🌙",
+            status: "IN_PROGRESS",
+            order: 1,
+            priority: "MEDIUM",
+            completed: false,
+          },
+          {
+            name: "Task Completed",
+            description: "This task has been finished.",
+            icon: "✅",
+            status: "COMPLETED",
+            order: 2,
+            priority: "LOW",
+            completed: true,
+          },
+          {
+            name: "Task Won't Do",
+            description: "This task will not be done.",
+            icon: "❌",
+            status: "WONT_DO",
+            order: 3,
+            priority: "LOW",
+            completed: false,
+          },
+        ],
+      },
+    },
+    select: { id: true },
+  });
+
+  return board.id;
+}
+
 /**
  * POST /api/boards
  * Cria board + 4 tasks default (igual ao design)
  */
 router.post("/", async (req, res, next) => {
   try {
-    const board = await prisma.board.create({
-      data: {
-        name: "My Task Board",
-        description: "Tasks to keep organised",
-        tasks: {
-          create: [
-            {
-              name: "Task To Do",
-              description: "Work on a challenge and learn TypeScript.",
-              icon: "📚",
-              status: "TODO",
-              order: 0,
-            },
-            {
-              name: "Task in Progress",
-              description: "Currently working on this task.",
-              icon: "🌙",
-              status: "IN_PROGRESS",
-              order: 0,
-            },
-            {
-              name: "Task Completed",
-              description: "This task has been finished.",
-              icon: "✅",
-              status: "COMPLETED",
-              order: 0,
-            },
-            {
-              name: "Task Won't Do",
-              description: "This task will not be done.",
-              icon: "❌",
-              status: "WONT_DO",
-              order: 0,
-            },
-          ],
-        },
-      },
-      select: { id: true },
-    });
-
-    res.status(201).json(board);
+    const id = await createDefaultBoard();
+    res.status(201).json({ id });
   } catch (error) {
     next(error);
   }
@@ -67,13 +87,14 @@ router.get("/:boardId", async (req, res, next) => {
   try {
     const { boardId } = req.params;
 
-    const board = await prisma.board.findUnique({
+    // Busca board; se não existir, cria um novo e devolve já com tasks.
+    let board = await prisma.board.findUnique({
       where: { id: boardId },
       include: {
         tasks: {
           orderBy: [
-            { status: "asc" },
-            { order: "asc" },
+            { completed: "asc" },
+            { priority: "asc" },
             { createdAt: "asc" },
           ],
         },
@@ -81,7 +102,23 @@ router.get("/:boardId", async (req, res, next) => {
     });
 
     if (!board) {
-      return res.status(404).json({ message: "Board not found" });
+      const newId = await createDefaultBoard();
+      res.setHeader("x-board-id", newId);
+
+      board = await prisma.board.findUnique({
+        where: { id: newId },
+        include: {
+          tasks: {
+            orderBy: [
+              { completed: "asc" },
+              { priority: "asc" },
+              { createdAt: "asc" },
+            ],
+          },
+        },
+      });
+
+      return res.status(200).json(board);
     }
 
     res.json(board);
@@ -132,6 +169,7 @@ router.delete("/:boardId", async (req, res, next) => {
 router.post("/:boardId/tasks", async (req, res, next) => {
   try {
     const { boardId } = req.params;
+    const body = createTaskSchema.parse(req.body ?? {});
 
     const last = await prisma.task.findFirst({
       where: { boardId, status: "TODO" },
@@ -144,11 +182,13 @@ router.post("/:boardId/tasks", async (req, res, next) => {
     const created = await prisma.task.create({
       data: {
         boardId,
-        name: "New Task",
-        description: null,
+        name: body.name,
+        description: body.description ?? null,
         icon: "📝",
         status: "TODO",
         order: nextOrder,
+        priority: body.priority,
+        completed: false,
       },
     });
 
